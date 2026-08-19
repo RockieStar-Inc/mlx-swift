@@ -43,7 +43,11 @@ final class CompiledFunction: @unchecked (Sendable) {
     }
 
     func innerCall(_ arguments: [MLXArray]) -> [MLXArray] {
-        let stateInputs = inputs.flatMap { $0.innerState() }
+        // MaterializedArray can never change, so it doesn't need to be
+        // threaded through the tracer swap below -- it is simply captured
+        // as a constant, the same as any other array reachable from the
+        // closure that isn't part of `inputs`/`outputs`.
+        let stateInputs = inputs.flatMap { $0.innerState() }.filter { !($0 is MaterializedArray) }
         let argumentsCount = arguments.count
 
         // inner function to hande the compilation.  this is called
@@ -70,7 +74,9 @@ final class CompiledFunction: @unchecked (Sendable) {
             let result = f(tracerArguments)
 
             // recapture the state as it may have changed
-            let stateOutputTracers = outputs.flatMap { $0.innerState() }.map { $0.copyContext() }
+            let stateOutputTracers = outputs.flatMap { $0.innerState() }
+                .filter { !($0 is MaterializedArray) }
+                .map { $0.copyContext() }
 
             // put the original values back in the state
             for (s, saved) in zip(stateInputs, savedStateInputs) {
@@ -119,7 +125,7 @@ final class CompiledFunction: @unchecked (Sendable) {
         let resultsPlusStateOutput = mlx_vector_array_values(resultVector)
 
         // push the stateOutput into the state
-        let stateOutput = outputs.flatMap { $0.innerState() }
+        let stateOutput = outputs.flatMap { $0.innerState() }.filter { !($0 is MaterializedArray) }
 
         for (s, newValues) in zip(stateOutput, resultsPlusStateOutput.suffix(stateOutput.count)) {
             s._updateInternal(newValues)
